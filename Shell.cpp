@@ -64,19 +64,80 @@ string getExecFile(string cmd)
   return pathtoexec;
 }
 
+string parseArg(string &input)
+{
+  string parsed = "";
+  int i = 0;
+  while (i < input.size())
+  {
+    if (isspace(input[i]))
+    {
+      parsed+=" ";
+      while(i<input.size() && isspace(input[i])) i++;
+    }
+    else if (input[i] == '\'')
+    {
+      i++;
+      string insideq = "";
+      while (i < input.size() && input[i] != '\'')
+      {
+        insideq += input[i];
+        i++;
+      }
+      i++;
+      parsed += insideq;
+    }else if (input[i] == '\"')
+    {
+      i++;
+      string insideq = "";
+      while (i < input.size() && input[i] != '\"')
+      {
+        if(input[i]=='\\'){
+          if(i+1 < input.size() && input[i+1]=='\"' || input[i+1]=='\\'){
+            insideq+=input[i+1];
+            i+=2;
+            continue;
+          }
+        }
+        insideq += input[i];
+        i++;
+      }
+      i++;
+      parsed += insideq;
+    }
+    else
+    {
+      string nonempt = "";
+      while (i < input.size() && !isspace(input[i]) && input[i] != '\'' && input[i] != '\"')
+      {
+        if(input[i]=='\\'){
+          i++;
+        }
+        if(i >= input.size()) break;
+        nonempt += input[i];
+        i++;
+      }
+      parsed += nonempt;
+    }
+  }
+  return parsed;
+}
 void handleEcho(string input)
 {
-  if(input.find("echo ")==string::npos) cout<<"Invalid format\n";
-  else{
-    string echoout = input.substr(input.find("echo ")+5,input.size()-input.find("echo "));
-    cout<<echoout<<"\n";
+  if (input.find("echo ") == string::npos)
+    cout << "Invalid format\n";
+  else
+  {
+    string echoout = input.substr(input.find("echo ") + 5, input.size() - input.find("echo "));
+    cout << parseArg(echoout) << "\n";
   }
 }
 
 void handleType(string input)
 {
-  if(input.find("type ")==string::npos) cout<<"Invalid format\n";
-  string arg2 = input.substr(input.find("type ")+5,input.size()-input.find("type "));
+  if (input.find("type ") == string::npos)
+    cout << "Invalid format\n";
+  string arg2 = input.substr(input.find("type ") + 5, input.size() - input.find("type "));
   if (builtins.find(arg2) != builtins.end())
     cout << arg2 << " is a shell builtin\n";
   else
@@ -91,8 +152,9 @@ void handleType(string input)
 
 void handleCd(string input)
 {
-  if(input.find("cd ")==string::npos) cout<<"Invalid format\n";
-  string arg2 = input.substr(input.find("cd ")+3,input.size()-input.find("cd "));
+  if (input.find("cd ") == string::npos)
+    cout << "Invalid format\n";
+  string arg2 = input.substr(input.find("cd ") + 3, input.size() - input.find("cd "));
   fs::directory_entry changedDir(arg2);
   if (arg2 != "~" && exists(changedDir) && changedDir.is_directory())
   {
@@ -110,15 +172,16 @@ void handleCd(string input)
   }
 }
 
-void handleCustom(string fullInput,string command)
+void handleCustom(string fullInput, string command)
 {
-  string commandfile = getExecFile(command);
+  string parsedCmd = parseArg(command);
+  string commandfile = getExecFile(parsedCmd);
   if (commandfile != "")
   {
     int rstatus = system(fullInput.c_str());
   }
   else
-    cout << command << ": command not found \n";
+    cout << parsedCmd << ": command not found \n";
 }
 int main()
 {
@@ -152,6 +215,6 @@ int main()
     else if (command == "cd")
       handleCd(input);
     else
-      handleCustom(input,command);
+      handleCustom(input, command);
   }
 }
