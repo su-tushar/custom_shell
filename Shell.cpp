@@ -3,6 +3,16 @@
 #include <unordered_set>
 #include <vector>
 #include <filesystem>
+#include <fstream>
+#include <stdlib.h>
+#ifndef _WIN32
+#include <unistd.h>
+#include <sys/wait.h>
+#else
+#include <stdio.h>
+#include <tchar.h>
+#include <windows.h>
+#endif
 using namespace std;
 namespace fs = filesystem;
 unordered_set<string> builtins = {"echo", "exit", "type", "pwd"};
@@ -49,13 +59,13 @@ string getExecFile(string cmd)
     {
       fs::path filepath = dir_entry;
       fs::path filestem = filepath.stem();
-      if (cmd == string(filestem))
+      if (cmd == filestem.string())
       {
         // file is found
         fs::perms p = fs::status(filepath).permissions();
         if (((fs::perms::group_exec & p) != fs::perms::none) || ((fs::perms::others_exec & p) != fs::perms::none))
         {
-          pathtoexec = string(filepath);
+          pathtoexec = filepath.string();
           return pathtoexec;
         }
       }
@@ -64,16 +74,16 @@ string getExecFile(string cmd)
   return pathtoexec;
 }
 
-string parseArg(string &input)
+void getArgv(string &input, vector<string> &argv)
 {
-  string parsed = "";
   int i = 0;
   while (i < input.size())
   {
+    string parsed = "";
     if (isspace(input[i]))
     {
-      parsed+=" ";
-      while(i<input.size() && isspace(input[i])) i++;
+      while (i < input.size() && isspace(input[i]))
+        i++;
     }
     else if (input[i] == '\'')
     {
@@ -85,17 +95,21 @@ string parseArg(string &input)
         i++;
       }
       i++;
-      parsed += insideq;
-    }else if (input[i] == '\"')
+      parsed = insideq;
+      argv.push_back(parsed);
+    }
+    else if (input[i] == '\"')
     {
       i++;
       string insideq = "";
       while (i < input.size() && input[i] != '\"')
       {
-        if(input[i]=='\\'){
-          if(i+1 < input.size() && input[i+1]=='\"' || input[i+1]=='\\'){
-            insideq+=input[i+1];
-            i+=2;
+        if (input[i] == '\\')
+        {
+          if (i + 1 < input.size() && input[i + 1] == '\"' || input[i + 1] == '\\')
+          {
+            insideq += input[i + 1];
+            i += 2;
             continue;
           }
         }
@@ -103,64 +117,71 @@ string parseArg(string &input)
         i++;
       }
       i++;
-      parsed += insideq;
+      parsed = insideq;
+      argv.push_back(parsed);
     }
     else
     {
       string nonempt = "";
       while (i < input.size() && !isspace(input[i]) && input[i] != '\'' && input[i] != '\"')
       {
-        if(input[i]=='\\'){
+        if (input[i] == '\\')
+        {
           i++;
         }
-        if(i >= input.size()) break;
+        if (i >= input.size())
+          break;
         nonempt += input[i];
         i++;
       }
-      parsed += nonempt;
+      parsed = nonempt;
+      argv.push_back(parsed);
     }
   }
-  return parsed;
-}
-void handleEcho(string input)
-{
-  if (input.find("echo ") == string::npos)
-    cout << "Invalid format\n";
-  else
-  {
-    string echoout = input.substr(input.find("echo ") + 5, input.size() - input.find("echo "));
-    cout << parseArg(echoout) << "\n";
-  }
+  return;
 }
 
-void handleType(string input)
+void handleEcho(vector<string> &argv)
 {
-  if (input.find("type ") == string::npos)
-    cout << "Invalid format\n";
-  string arg2 = input.substr(input.find("type ") + 5, input.size() - input.find("type "));
-  if (builtins.find(arg2) != builtins.end())
-    cout << arg2 << " is a shell builtin\n";
+  for (int i = 1; i < argv.size(); i++)
+  {
+    cout << argv[i] << " ";
+  }
+  cout << "\n";
+}
+
+void handleType(vector<string> &argv)
+{
+  string command;
+  if (argv.size() == 1)
+    command = "";
+  else
+    command = argv[1];
+  if (builtins.find(command) != builtins.end())
+    cout << command << " is a shell builtin\n";
   else
   {
-    string commandfile = getExecFile(arg2);
+    string commandfile = getExecFile(command);
     if (commandfile != "")
-      cout << arg2 << " is " << commandfile << "\n";
+      cout << command << " is " << commandfile << "\n";
     else
-      cout << arg2 << ": not found\n";
+      cout << command << ": not found\n";
   }
 }
 
-void handleCd(string input)
+void handleCd(vector<string> &argv)
 {
-  if (input.find("cd ") == string::npos)
-    cout << "Invalid format\n";
-  string arg2 = input.substr(input.find("cd ") + 3, input.size() - input.find("cd "));
-  fs::directory_entry changedDir(arg2);
-  if (arg2 != "~" && exists(changedDir) && changedDir.is_directory())
+  string path;
+  if (argv.size() == 1)
+    path = "";
+  else
+    path = argv[1];
+  fs::directory_entry changedDir(path);
+  if (path != "~" && exists(changedDir) && changedDir.is_directory())
   {
     fs::current_path(changedDir);
   }
-  else if (arg2 == "~")
+  else if (path == "~")
   {
     string homePath = getenv("HOME");
     fs::directory_entry homeDir(homePath);
@@ -168,21 +189,69 @@ void handleCd(string input)
   }
   else
   {
-    cout << "cd: " << arg2 << ": No such file or directory\n";
+    cout << "cd: " << path << ": No such file or directory\n";
   }
 }
 
-void handleCustom(string fullInput, string command)
+void handleCustom(vector<string> &argv,string input)
 {
-  string parsedCmd = parseArg(command);
-  string commandfile = getExecFile(parsedCmd);
-  if (commandfile != "")
-  {
-    int rstatus = system(fullInput.c_str());
+  string exeFile = getExecFile(argv[0]);
+  #ifndef _WIN32
+  if(exeFile==""){
+    cout<<argv[0]<<": Command not found\n";
   }
-  else
-    cout << parsedCmd << ": command not found \n";
+  cout<<exeFile<<"\n";
+  pid_t pid = fork();
+  if(pid == 0){
+    //child process it is
+    char *argvc[argv.size()+1];
+    for(int i=0;i<argv.size();i++){
+      string& s = argv[i];
+      char *cs =const_cast<char*>(s.c_str());
+      argvc[i] = cs;
+    }
+    argvc[argv.size()]=NULL;
+    execv(const_cast<char*>(exeFile.c_str()),argvc); 
+  }else if(pid > 0){
+    //its parent
+    wait(NULL);
+  }else{
+    cout<<"Error occured\n";
+  }
+  #else
+    STARTUPINFOA si;
+    PROCESS_INFORMATION pi;
+
+    ZeroMemory(&si, sizeof(si));
+    si.cb = sizeof(si);
+    ZeroMemory(&pi, sizeof(pi));
+
+    char cmd[] = "C:\\Windows\\System32\\ping.exe -n 2 127.0.0.1";
+    bool ok = CreateProcessA(
+        "C:\\Windows\\System32\\ping.exe", // full path (optional but recommended)
+        cmd,       // command line (argv as string)
+        NULL,
+        NULL,
+        FALSE,
+        0,
+        NULL,
+        NULL,
+        &si,
+        &pi
+    );
+    if (!ok) {
+        std::cerr << "CreateProcess failed: " << GetLastError() << "\n";
+        return;
+    }
+
+    // Wait like wait()
+    WaitForSingleObject(pi.hProcess, INFINITE);
+
+    CloseHandle(pi.hProcess);
+    CloseHandle(pi.hThread);
+  #endif
 }
+
 int main()
 {
   // Flush after every std::cout / std:cerr
@@ -196,25 +265,23 @@ int main()
     cout << "$ ";
     string input;
     getline(cin, input);
-
-    if (input.size() == 0)
+    vector<string> argv;
+    getArgv(input, argv);
+    if (argv.size() == 0)
       continue;
-    string command;
-    if (input.find(' ') == string::npos)
-      command = input;
-    else
-      command = input.substr(0, input.find(' '));
-    if (command == "exit")
+
+    if (argv[0] == "exit")
       break;
-    else if (command == "echo")
-      handleEcho(input);
-    else if (command == "type")
-      handleType(input);
-    else if (command == "pwd")
-      cout << string(fs::current_path()) << "\n";
-    else if (command == "cd")
-      handleCd(input);
+    else if (argv[0] == "type")
+      handleType(argv);
+    else if (argv[0] == "pwd"){
+        fs::path currpath = fs::current_path();
+      cout << currpath.string() << "\n";
+    }else if (argv[0] == "cd")
+      handleCd(argv);
+    else if (argv[0] == "echo")
+      handleEcho(argv);
     else
-      handleCustom(input, command);
+      handleCustom(argv,input);
   }
 }
