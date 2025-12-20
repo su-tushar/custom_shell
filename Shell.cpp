@@ -236,14 +236,6 @@ void handleCustom(vector<string> &argv,string input,unordered_map<int,int> &fds)
   pid_t pid = fork();
   if(pid == 0){
     //child process it is
-    if(fds.find(1)!=fds.end()){
-      dup2(fds[1],1);
-      close(fds[1]);
-    }
-    if(fds.find(2)!=fds.end()){
-      dup2(fds[2],2);
-      close(fds[2]);
-    }
     char *argvc[argv.size()+1];
     for(int i=0;i<argv.size();i++){
       string& s = argv[i];
@@ -255,12 +247,6 @@ void handleCustom(vector<string> &argv,string input,unordered_map<int,int> &fds)
   }else if(pid > 0){
     //its parent
     wait(NULL);
-    if(fds.find(1)!=fds.end()){
-      close(fds[1]);
-    }
-    if(fds.find(2)!=fds.end()){
-      close(fds[2]);
-    }
   }else{
     cout<<"Error occured\n";
   }
@@ -316,10 +302,20 @@ int main()
     getArgv(input, argv,fds);
     if (argv.size() == 0)
       continue;
-
     if (argv[0] == "exit")
       break;
-    else if (argv[0] == "type")
+    int saved_stdout_fd = dup(STDOUT_FILENO);
+    int saved_stderr_fd = dup(STDERR_FILENO);
+    if(fds.find(1)!=fds.end()){
+      dup2(fds[1],1);
+      close(fds[1]);
+    }
+    if(fds.find(2)!=fds.end()){
+      dup2(fds[2],2);
+      close(fds[2]);
+    }
+    
+    if (argv[0] == "type")
       handleType(argv);
     else if (argv[0] == "pwd"){
         fs::path currpath = fs::current_path();
@@ -330,5 +326,14 @@ int main()
       handleEcho(argv);
     else
       handleCustom(argv,input,fds);
+    
+    if(fds.find(1)!=fds.end()){
+      dup2(saved_stdout_fd,STDOUT_FILENO);
+      close(saved_stdout_fd);
+    }
+    if(fds.find(2)!=fds.end()){
+      dup2(saved_stderr_fd,STDERR_FILENO);
+      close(saved_stderr_fd);
+    }
   }
 }
