@@ -1,6 +1,7 @@
 #include <iostream>
 #include <string>
 #include <unordered_set>
+#include <unordered_map>
 #include <vector>
 #include <filesystem>
 #include <fstream>
@@ -8,6 +9,7 @@
 #ifndef _WIN32
 #include <unistd.h>
 #include <sys/wait.h>
+#include <fcntl.h>
 #else
 #include <stdio.h>
 #include <tchar.h>
@@ -74,7 +76,7 @@ string getExecFile(string cmd)
   return pathtoexec;
 }
 
-void getArgv(string &input, vector<string> &argv)
+void getArgv(string &input, vector<string> &argv,unordered_map<int,int> &fds)
 {
   int i = 0;
   while (i < input.size())
@@ -119,6 +121,36 @@ void getArgv(string &input, vector<string> &argv)
       i++;
       parsed = insideq;
       argv.push_back(parsed);
+    }
+    else if((input[i]=='>') || ((input[i] =='1' || input[i] =='2') && (i+1 < input.size() && input[i+1]=='>'))){
+      int mode = 1;//for stdout // 1 for stderr
+      if(input[i]=='1') i++;
+      if(input[i]=='2'){
+        mode=2;
+        i++;
+      }
+      i++;
+      bool append = false;
+      if(i < input.size() && input[i]=='>'){
+        append = true;
+        i++;
+      }
+      //now grab the file name or path
+      while (i < input.size() && isspace(input[i]))
+        i++;
+      string filen="";
+      while (i < input.size() && !isspace(input[i])){
+        filen+=input[i];
+        i++;
+      }
+      int fd;
+      if(!append) fd = open(filen.c_str(), O_CREAT | O_WRONLY | O_TRUNC, 0644);
+      else fd = open(filen.c_str(), O_CREAT | O_WRONLY | O_APPEND, 0644);
+      if(fd==-1){
+        cout<<"File opening failed/n";
+        break;
+      }
+      fds[mode]=fd;
     }
     else
     {
@@ -193,7 +225,7 @@ void handleCd(vector<string> &argv)
   }
 }
 
-void handleCustom(vector<string> &argv,string input)
+void handleCustom(vector<string> &argv,string input,unordered_map<int,int> &fds)
 {
   string exeFile = getExecFile(argv[0]);
   #ifndef _WIN32
@@ -204,6 +236,14 @@ void handleCustom(vector<string> &argv,string input)
   pid_t pid = fork();
   if(pid == 0){
     //child process it is
+    if(fds.find(1)!=fds.end()){
+      dup2(fds[1],1);
+      close(fds[1]);
+    }
+    if(fds.find(2)!=fds.end()){
+      dup2(fds[2],2);
+      close(fds[2]);
+    }
     char *argvc[argv.size()+1];
     for(int i=0;i<argv.size();i++){
       string& s = argv[i];
@@ -215,6 +255,12 @@ void handleCustom(vector<string> &argv,string input)
   }else if(pid > 0){
     //its parent
     wait(NULL);
+    if(fds.find(1)!=fds.end()){
+      close(fds[1]);
+    }
+    if(fds.find(2)!=fds.end()){
+      close(fds[2]);
+    }
   }else{
     cout<<"Error occured\n";
   }
@@ -266,7 +312,8 @@ int main()
     string input;
     getline(cin, input);
     vector<string> argv;
-    getArgv(input, argv);
+    unordered_map<int,int> fds;
+    getArgv(input, argv,fds);
     if (argv.size() == 0)
       continue;
 
@@ -282,6 +329,6 @@ int main()
     else if (argv[0] == "echo")
       handleEcho(argv);
     else
-      handleCustom(argv,input);
+      handleCustom(argv,input,fds);
   }
 }
